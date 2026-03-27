@@ -188,6 +188,50 @@ def template_to_file(template, plugin_root_path, relative_path, template_vars):
     destination_path.chmod(mode)
 
 
+def merge_gitleaks(template, plugin_root_path, relative_path, template_vars={}):
+    """
+    Take values from .gitleaks.allowlist.j2 and insert them into the allowlist of
+    an existing .gitleaks.toml file, or create said file otherwise.
+    """
+    basename, merge_key = relative_path.split(".toml.", maxsplit=1)
+    # "allowlist" is all we recognize for gitleaks
+    assert "allowlist" == merge_key
+    # We aren't using template-vars *currently* - but may want to at some point.
+    data = tomlkit.loads(template.render(**template_vars))
+    path = Path(plugin_root_path / f"{basename}.toml")
+    if path.exists():
+        old_toml = tomlkit.load(path.open())
+        if merge_key not in old_toml:
+            old_toml["allowlist"] = data["allowlist"]
+        else:
+            old_toml["allowlist"]["description"] = data["allowlist"]["description"]
+            merge_sets("paths", data, old_toml)
+            merge_sets("regexes", data, old_toml)
+
+    else:
+        old_toml = data
+    output = tomlkit.dumps(old_toml)
+    if output[-1] != "\n":
+        output = output + "\n"
+    path.write_text(output)
+
+
+def merge_sets(key, data, old_toml):
+    """
+    For a given key, merge any existing values and incoming new ones.
+    Use set() to get rid of duplicates, use sorted() to enforce ordering.
+    If incoming values are already a subset of the existing ones - nothing to do here.
+    """
+    if key in old_toml["allowlist"]:
+        old_values = set(old_toml["allowlist"][key])
+        new_values = set(data["allowlist"][key])
+        if new_values.issubset(old_values):  # Everything we want to add is already there
+            return
+        old_toml["allowlist"][key] = sorted(old_values.union(new_values))
+    else:
+        old_toml["allowlist"][key] = sorted(set(data["allowlist"][key]))
+
+
 def merge_toml(template, plugin_root_path, relative_path, template_vars):
     """
     Template a file of the form 'basename.toml.merge_key' and combine its content beneath
